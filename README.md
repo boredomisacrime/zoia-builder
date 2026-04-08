@@ -1,8 +1,10 @@
 # ZOIA Patch Builder
 
-Describe the guitar effect you want in plain language. Get step-by-step instructions to build it on an [Empress Effects ZOIA](https://empresseffects.com/products/zoia) pedal.
+Describe the guitar effect you want in plain language. Get step-by-step build instructions — or download a `.bin` file you can load directly onto the pedal.
 
 Powered by AI (runs locally with Ollama, or via Google's Gemini API).
+
+![ZOIA Patch Builder UI](screenshots/ui.png)
 
 ## Quick Start
 
@@ -11,7 +13,7 @@ You need **Python 3** installed. That's it.
 ### 1. Clone and set up
 
 ```bash
-git clone https://github.com/edulrich/zoia-builder.git
+git clone https://github.com/boredomisacrime/zoia-builder.git
 cd zoia-builder
 bash setup.sh
 ```
