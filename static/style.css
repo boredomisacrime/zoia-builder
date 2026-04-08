@@ -1,0 +1,355 @@
+:root {
+  --bg: #0e0e10;
+  --surface: #18181b;
+  --surface-hover: #1e1e22;
+  --border: #2a2a2e;
+  --text: #e4e4e7;
+  --text-muted: #71717a;
+  --accent: #a78bfa;
+  --accent-dim: #7c3aed;
+  --error: #ef4444;
+  --error-bg: #1c1012;
+  --radius: 10px;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Inter', -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  line-height: 1.6;
+}
+
+.container {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 3rem 1.5rem 2rem;
+}
+
+header {
+  margin-bottom: 2.5rem;
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.5rem;
+}
+
+.logo-icon {
+  font-size: 1.4rem;
+  color: var(--accent);
+}
+
+h1 {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.subtitle {
+  color: var(--text-muted);
+  font-size: 0.95rem;
+}
+
+.input-section {
+  margin-bottom: 1.5rem;
+}
+
+label {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  margin-bottom: 0.5rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+textarea {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: 'Inter', sans-serif;
+  font-size: 0.95rem;
+  padding: 1rem;
+  resize: vertical;
+  transition: border-color 0.2s;
+  line-height: 1.6;
+}
+
+textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+textarea::placeholder {
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+.controls {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+button {
+  font-family: 'Inter', sans-serif;
+  font-size: 0.9rem;
+  font-weight: 600;
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+#build-btn {
+  background: var(--accent);
+  color: #0e0e10;
+  padding: 0.7rem 1.8rem;
+}
+
+#build-btn:hover {
+  background: #b79eff;
+}
+
+#build-btn:active {
+  transform: scale(0.98);
+}
+
+#build-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.accent-secondary {
+  background: transparent;
+  color: var(--accent);
+  padding: 0.7rem 1.4rem;
+  border: 1px solid var(--accent);
+}
+
+.accent-secondary:hover {
+  background: rgba(167, 139, 250, 0.1);
+}
+
+.accent-secondary:active {
+  transform: scale(0.98);
+}
+
+.accent-secondary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.secondary {
+  background: var(--surface);
+  color: var(--text-muted);
+  padding: 0.7rem 1.2rem;
+  border: 1px solid var(--border);
+}
+
+.secondary:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.error {
+  background: var(--error-bg);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: var(--radius);
+  color: var(--error);
+  padding: 0.8rem 1rem;
+  font-size: 0.9rem;
+  margin-bottom: 1.5rem;
+}
+
+.result-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+
+.result-header h2 {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.copy-btn {
+  background: var(--surface);
+  color: var(--text-muted);
+  padding: 0.4rem 0.9rem;
+  font-size: 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.copy-btn:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.result-content {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.5rem;
+  font-size: 0.9rem;
+  line-height: 1.75;
+  overflow-x: auto;
+}
+
+.result-content h1,
+.result-content h2,
+.result-content h3 {
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--accent);
+  margin-top: 1.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.result-content h1 { font-size: 1.2rem; }
+.result-content h2 { font-size: 1.05rem; }
+.result-content h3 { font-size: 0.95rem; }
+
+.result-content h1:first-child,
+.result-content h2:first-child,
+.result-content h3:first-child {
+  margin-top: 0;
+}
+
+.result-content p {
+  margin-bottom: 0.75rem;
+}
+
+.result-content ul,
+.result-content ol {
+  margin-bottom: 0.75rem;
+  padding-left: 1.5rem;
+}
+
+.result-content li {
+  margin-bottom: 0.3rem;
+}
+
+.result-content code {
+  font-family: 'JetBrains Mono', monospace;
+  background: rgba(167, 139, 250, 0.1);
+  color: var(--accent);
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  font-size: 0.85em;
+}
+
+.result-content pre {
+  background: #111113;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem;
+  overflow-x: auto;
+  margin-bottom: 0.75rem;
+}
+
+.result-content pre code {
+  background: none;
+  padding: 0;
+  font-size: 0.85rem;
+  color: var(--text);
+}
+
+.result-content strong {
+  color: #f4f4f5;
+}
+
+.result-content table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 1rem;
+}
+
+.result-content th,
+.result-content td {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border);
+  text-align: left;
+  font-size: 0.85rem;
+}
+
+.result-content th {
+  background: #111113;
+  font-weight: 600;
+}
+
+.progress-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.progress-step {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  transition: color 0.3s;
+}
+
+.progress-step.active {
+  color: var(--accent);
+}
+
+.progress-step.done {
+  color: var(--text);
+}
+
+.streaming-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1.1em;
+  background: var(--accent);
+  vertical-align: text-bottom;
+  margin-left: 2px;
+  animation: blink 0.6s steps(2) infinite;
+}
+
+@keyframes blink {
+  0% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+footer {
+  margin-top: 3rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--border);
+}
+
+footer p {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  text-align: center;
+}
+
+@media (max-width: 600px) {
+  .container {
+    padding: 2rem 1rem 1.5rem;
+  }
+
+  h1 {
+    font-size: 1.25rem;
+  }
+
+  textarea {
+    font-size: 1rem;
+  }
+}

@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ZOIA Patch Builder</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="logo">
+        <span class="logo-icon">◆</span>
+        <h1>ZOIA Patch Builder</h1>
+      </div>
+      <p class="subtitle">Describe the effect you want. Get step-by-step build instructions.</p>
+    </header>
+
+    <main>
+      <div class="input-section">
+        <label for="description">What effect do you want to build?</label>
+        <textarea
+          id="description"
+          placeholder="e.g. A lush shimmer reverb with slow pitch-shifted trails and a tap tempo tremolo on top. Expression pedal controls reverb decay."
+          rows="4"
+        ></textarea>
+        <div class="controls">
+          <button id="build-btn" onclick="buildPatch()">
+            <span class="btn-text">Build Patch</span>
+            <span class="btn-loading" style="display:none;">Building…</span>
+          </button>
+          <button id="download-btn" class="accent-secondary" onclick="downloadBin()">
+            <span class="btn-text">Download .bin</span>
+            <span class="btn-loading" style="display:none;">Generating…</span>
+          </button>
+          <button id="clear-btn" class="secondary" onclick="clearAll()">Clear</button>
+        </div>
+      </div>
+
+      <div id="error" class="error" style="display:none;"></div>
+
+      <div id="result-section" style="display:none;">
+        <div class="result-header">
+          <h2>Your Patch</h2>
+          <button class="copy-btn" onclick="copyResult()">Copy</button>
+        </div>
+        <div id="result" class="result-content"></div>
+      </div>
+    </main>
+
+    <footer>
+      <p>Powered by AI (Ollama / Gemini). Not affiliated with Empress Effects.</p>
+    </footer>
+  </div>
+
+  <script src="/static/script.js"></script>
+</body>
+</html>
