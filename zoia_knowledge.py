@@ -632,13 +632,29 @@ or references a **famous dense patch** by name — **ignore** any 3-module limit
   You cannot guarantee identical behaviour — approximate the **architecture** (layers, parallel loops, space, modulation)
   and suggest **tweaks on the pedal**.
 
-### FORBIDDEN: Sampler and Looper in the audio chain
-NEVER use Sampler or Looper as part of the live audio signal chain.
-These modules RECORD audio then PLAY IT BACK — they do NOT pass live audio through.
-If you put a Sampler between Audio Input and Audio Output, the patch will be SILENT
-because the Sampler has nothing recorded to play back.
-The ONLY time to use Sampler or Looper is when the user EXPLICITLY asks for
-sampling or looping functionality, and even then it must NOT be the only path to Audio Output.
+### FORBIDDEN: Sampler and Looper as the ONLY audio path
+NEVER make Sampler or Looper the only route to Audio Output. These modules RECORD then PLAY BACK — with nothing recorded, the output is silence. Without a live parallel path, engaged = silent.
+
+**CORRECT Sampler architecture (always use this):**
+```
+Audio Input.output_L → Audio Mixer.audio_in_1_L          ← live dry path (always audible)
+Audio Input.output_L → Sampler.audio_in_L                ← feed the sampler for recording
+Sampler.audio_out_L  → Audio Mixer.audio_in_2_L          ← sampler playback path (when triggered)
+Audio Mixer.audio_out_L → Audio Output.input_L
+Stompswitch.cv_output → Sampler.record                    ← foot triggers recording
+```
+Extra effects (reverb, delay) can sit on either path. The key is that `audio_in_1_L` (live) is ALWAYS connected.
+
+**NEVER do this (patch will be silent until something is recorded):**
+```
+Audio Input → Sampler → effects → Audio Output   ← WRONG: no live path
+```
+
+### Connections: you can only connect FROM OUTPUT blocks
+- Valid sources: `audio_out`, `cv_out` type blocks
+- **NEVER** use `audio_in` or `cv_in` type blocks as the FROM end of a connection
+- Example of WRONG: `"from": "VCA.audio_in_1"` — audio_in_1 is an input, not an output
+- Example of CORRECT: `"from": "VCA.audio_out_1"` — audio_out_1 is the output
 
 ### The #1 rule: unbroken audio path
 There MUST be an unbroken chain of AUDIO connections from Audio Input to Audio Output.
@@ -703,10 +719,12 @@ Plate Reverb.audio_out_L → Audio Output.input_L
 ```
 
 ## WRONG patterns (these cause silence or noise):
-- Audio Input → Sampler → Audio Output  (SILENT — Sampler doesn't pass through)
-- Audio Input → Looper → Audio Output   (SILENT — Looper doesn't pass through)
-- LFO.output → Delay Line.audio_in      (NOISE — CV signal in audio input)
-- Env Follower.cv_output → VCA.audio_in  (NOISE — CV signal in audio input)
+- `Audio Input → Sampler → effects → Audio Output`  (SILENT until recorded — no live path)
+- `Audio Input → Looper → Audio Output`  (SILENT until looper has content)
+- `"from": "VCA.audio_in_1"` in a connection  (audio_in is an INPUT, cannot source from it)
+- `"from": "SV Filter.audio_in"` in a connection  (same — audio_in is not a source)
+- LFO.output → Delay Line.audio_in  (NOISE — CV into audio input)
+- Env Follower.cv_output → VCA.audio_in  (NOISE — CV into audio input)
 - Audio chain with VCA.level_control = 0.0  (SILENT — VCA mutes everything)
 
 ## SAFE PASS-THROUGH MODULES (use these in audio chains)
@@ -729,11 +747,13 @@ Stereo Spread, Inverter.
 
 ## MANDATORY VERIFICATION CHECKLIST (do this before outputting JSON)
 1. Trace the audio path: Audio Input.output_L → ... → Audio Output.input_L. Write it out.
-2. Is every module in that chain a PASS-THROUGH module? (No Sampler, No Looper)
-3. Does every module in the chain have BOTH input AND output connected?
-4. Are all CV sources (LFO, Env Follower, etc.) connected ONLY to parameter blocks?
-5. Is VCA level_control > 0? Are no critical parameters at 0.0?
-6. Does Audio Output.input_L have a connection?
+2. Is every module in that chain a PASS-THROUGH module? (No Sampler, No Looper as sole path)
+3. If Sampler or Looper is used: is there a LIVE parallel path to Audio Output that doesn't go through it?
+4. Does every module in the chain have BOTH input AND output connected?
+5. For every connection: is the FROM block an OUTPUT (audio_out or cv_out) — NOT an audio_in or cv_in?
+6. Are all CV sources (LFO, Env Follower, etc.) connected ONLY to parameter blocks?
+7. Is VCA level_control > 0? Are no critical parameters at 0.0?
+8. Does Audio Output.input_L have a connection?
 
 ## ADDITIONAL RULES
 

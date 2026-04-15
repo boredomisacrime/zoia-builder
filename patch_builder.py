@@ -526,11 +526,30 @@ def validate_patch(encoder_dict):
                 _block_name_cache[key] = (f"?pos{block_pos}", False)
         return _block_name_cache[key]
 
+    # --- Build block-type lookup from ModuleIndex ---
+    _block_type_cache = {}  # (mod_idx, block_pos) -> "audio_in"|"audio_out"|"cv_in"|"cv_out"|"?"
+    for mi, mod in enumerate(modules):
+        mod_def = _FULL_INDEX.get(str(mod["mod_idx"]), {})
+        for bname, binfo in mod_def.get("blocks", {}).items():
+            _block_type_cache[(mi, binfo["position"])] = binfo.get("type", "?")
+
     for conn in connections:
         src_mod = conn["source_raw"]
         dst_mod = conn["dest_raw"]
         src_is_cv = modules[src_mod]["mod_idx"] in _CV_ONLY_IDS
         dst_bname, dst_is_param = _dst_block_info(dst_mod, conn["dest_block_raw"])
+
+        # Flag connections FROM an input block (audio_in or cv_in) — invalid source
+        src_block_type = _block_type_cache.get((src_mod, conn["source_block_raw"]), "?")
+        if src_block_type in ("audio_in", "cv_in"):
+            src_bname, _ = _dst_block_info(src_mod, conn["source_block_raw"])
+            src_type = modules[src_mod].get("type", "?")
+            dst_type = modules[dst_mod].get("type", "?")
+            issues.append(
+                f"INVALID SOURCE: {src_type}.{src_bname} is an INPUT jack — "
+                f"you cannot connect FROM an input. "
+                f"Did you mean to use {src_type}'s OUTPUT block instead?"
+            )
 
         # Flag CV→audio misconnections
         if src_is_cv and not dst_is_param:
@@ -584,11 +603,12 @@ def validate_patch(encoder_dict):
             if modules[mod_idx]["mod_idx"] in _CAPTURE_PLAY_IDS:
                 mod_type = modules[mod_idx].get("type", "?")
                 issues.append(
-                    f"CAPTURE MODULE: {mod_type} is in the live audio chain "
-                    f"but does NOT pass audio through — it records first, "
-                    f"then plays back on command. This breaks the signal flow. "
-                    f"Use a pass-through effect instead (Delay Line, Reverb, "
-                    f"Granular, Chorus, etc.)."
+                    f"CAPTURE MODULE IN CHAIN: {mod_type} is in the sole audio path but "
+                    f"does NOT pass live audio — it records first, then plays back. "
+                    f"Correct architecture: keep a LIVE path (Audio Input → effects → Audio Mixer.in_1), "
+                    f"and feed {mod_type}.audio_out_L into a second mixer input. "
+                    f"Use a Stompswitch to trigger {mod_type}.record. "
+                    f"NEVER make {mod_type} the only route to Audio Output."
                 )
 
     # --- VCA level check ---
