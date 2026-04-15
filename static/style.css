@@ -98,6 +98,63 @@ textarea::placeholder {
   opacity: 0.6;
 }
 
+.pdf-upload {
+  margin-top: 0.75rem;
+}
+
+.pdf-label {
+  display: inline-block;
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0.4rem 0;
+  transition: color 0.15s;
+}
+
+.pdf-label:hover {
+  color: var(--accent);
+}
+
+.pdf-icon {
+  font-size: 1rem;
+  vertical-align: -1px;
+}
+
+.pdf-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: rgba(167, 139, 250, 0.08);
+  border: 1px solid rgba(167, 139, 250, 0.25);
+  border-radius: 6px;
+  padding: 0.35rem 0.7rem;
+  font-size: 0.82rem;
+  color: var(--accent);
+  margin-top: 0.4rem;
+}
+
+.pdf-status.loading {
+  opacity: 0.6;
+}
+
+.pdf-remove {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1.1rem;
+  padding: 0 0.2rem;
+  cursor: pointer;
+  line-height: 1;
+  border-radius: 3px;
+}
+
+.pdf-remove:hover {
+  color: var(--error);
+}
+
 .controls {
   display: flex;
   gap: 0.75rem;
@@ -326,6 +383,32 @@ button {
 @keyframes blink {
   0% { opacity: 1; }
   100% { opacity: 0; }
+}
+
+.validation-warnings {
+  margin-top: 1rem;
+  padding: 0.8rem 1rem;
+  background: rgba(251, 191, 36, 0.08);
+  border: 1px solid rgba(251, 191, 36, 0.25);
+  border-radius: 8px;
+  font-size: 0.85rem;
+  color: #fbbf24;
+}
+
+.validation-warnings strong {
+  display: block;
+  margin-bottom: 0.4rem;
+  color: #fbbf24;
+}
+
+.validation-warnings ul {
+  margin: 0;
+  padding-left: 1.2rem;
+}
+
+.validation-warnings li {
+  margin-bottom: 0.3rem;
+  line-height: 1.5;
 }
 
 footer {

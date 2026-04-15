@@ -21,6 +21,11 @@ and connecting their inputs and outputs. Each module performs a specific functio
 - Always start with **Audio Input** (brings guitar signal in) and end with **Audio Output** (sends signal out).
 - Gain staging matters: watch levels to avoid clipping. Use VCA or Audio Balance modules to manage levels.
 
+### Minimal first (do not over-build) — unless they want the opposite
+Unless the user **explicitly** asks for modulation, LFO, chorus vibrato, randomness, sequencer, sample & hold,
+expression-pedal mapping, or “movement”, design the **smallest** useful patch — usually **Audio Input → one effect module → Audio Output** with **no extra CV/generator modules**. Do **not** add an LFO, Random module, or Expression module “for interest” or “for easy tweaking”; mis-routed CV into audio paths causes **harsh noise**. If they want a normal delay or reverb, give them that path only; mention optional extras in text as a *second step*, not in the same grid build.
+If they ask for **ambient**, **layered**, **Loop Forest–style**, **experimental**, **complex**, **dense**, **“go crazy”**, or **many modules**, **discard** minimal-first: go large, use CV to parameters, multiple pages, mixers, parallel paths — still keep CV out of **audio_in** jacks.
+
 ### Connections
 - Each module has **input jacks** (receive signal) and **output jacks** (send signal).
 - To connect: navigate to a module's output, press to start connection, navigate to another module's input, press to complete.
@@ -153,21 +158,23 @@ Below is the complete module library organised by category. For each module, I l
 
 ### EFFECTS — DELAY
 
-**Delay Line**
-- Inputs: audio in, CV time, CV feedback
-- Outputs: audio out, tap out
-- Parameters: time (ms), feedback, mix, max delay time (set at creation: 1s, 2s, 4s, etc.)
-- Longer max time = more CPU/memory.
+**CRITICAL — do not confuse these modules.** The plain **Delay Line** is NOT a full-featured delay block like a Strymon preset.
 
-**Delay w/ Mod**
-- Inputs: audio in, CV time, CV feedback, CV mod rate, CV mod depth
-- Outputs: audio out
-- Parameters: time, feedback, mod rate, mod depth, mix, tone
+**Delay Line** (minimal — often misleadingly called “delay” in casual language)
+- Audio: **audio in** → **audio out** only. Output is **delayed audio only** — there is **NO mix control** and **NO feedback knob** on this module.
+- Parameters you can modulate: **delay time** (and optional **modulation in** / **tap tempo in** blocks if enabled in module options). There is **no “mix” parameter** to map a stompswitch to.
+- **“Feedback” / repeats** on ZOIA are done by **patching**: connect **audio out** back to **audio in** and use **connection strength** to set how much regenerates — not a single “feedback %” parameter.
+- **Dry guitar** must be summed separately: run **Audio Input** → **Audio Output** in parallel with the delay chain, or use a module that has a real **mix** (below).
+- Module option **max delay time** (1s / 2s / 4s / …) is chosen when you place the module; longer = more CPU.
+
+**Delay w/Mod** (use this when the user wants delay + mix + feedback in one place)
+- Stereo I/O, **mix**, **feedback**, modulation — matches how most players describe “a delay pedal.”
+- Parameters include **time**, **feedback**, **mix**, mod rate/depth, etc.
 
 **Ping Pong Delay**
-- Inputs: audio in L, audio in R
-- Outputs: audio out L, audio out R
-- Parameters: time, feedback, mix, spread
+- Stereo in/out, **feedback**, **mix**, spread — good for ping-pong / stereo delays.
+
+**When the user asks for a “simple delay”**, prefer **Delay w/Mod** or **Ping Pong Delay** (mono source: use L only) unless they explicitly want the minimal **Delay Line** + parallel dry path + optional feedback loop.
 
 **CV Delay**
 - Inputs: CV in
@@ -605,7 +612,130 @@ Return a single JSON object with this exact structure:
   ]
 }}
 
-## RULES
+## ABSOLUTELY CRITICAL — READ THIS FIRST
+
+### MINIMAL BY DEFAULT (JSON / .bin output) — only for *small* requests
+- Use the **fewest modules** that satisfy the user **when they asked for something minimal** (see STRICT MINIMAL block if appended).
+- **Do not** add LFO, Random, Sequencer, Expression, etc. **unless** the user asked for modulation, sweep, randomness, expression, sequencing, or similar — *unless* they are clearly asking for a **complex / ambient / layered** patch (see next section).
+- **Never** connect any CV module output to an **audio_in** block (that causes buzz/screech/noise).
+
+### COMPLEX / AMBITIOUS PATCHES (Loop Forest–tier, soundscapes, “go crazy”)
+When the user asks for **complex**, **ambient**, **layered**, **experimental**, **dense**, **lush**, **many modules**,
+**granular**, **like Loop Forest**, **soundscape**, **generative**, **glitch**, **IDM**, **crazy**, **wild**, **not simple**,
+or references a **famous dense patch** by name — **ignore** any 3-module limit. Build **large**:
+- Spread across **multiple pages**; use **Audio Mixer**, **VCAs**, parallel paths, **Granular**, **Plate Reverb**, **diffusion**,
+  **multiple delays**, **LFOs/Random** to CV **parameter blocks only**, **Sequencer**/**Stompswitch** for performance.
+- **Looper** and **Sampler** are allowed when the user wants **looping / sampling** — but **never** as the **sole** audio path
+  to **Audio Output** (keep a **live dry or wet path** that doesn’t depend on an empty buffer).
+- Aim for **musical routing**, not module spam: every CV cable goes to a **parameter** jack, audio stays in audio jacks.
+- **Reality check:** A legendary community patch (e.g. **Loop Forest**) is the product of **hours of iteration** and ears on hardware.
+  You cannot guarantee identical behaviour — approximate the **architecture** (layers, parallel loops, space, modulation)
+  and suggest **tweaks on the pedal**.
+
+### FORBIDDEN: Sampler and Looper in the audio chain
+NEVER use Sampler or Looper as part of the live audio signal chain.
+These modules RECORD audio then PLAY IT BACK — they do NOT pass live audio through.
+If you put a Sampler between Audio Input and Audio Output, the patch will be SILENT
+because the Sampler has nothing recorded to play back.
+The ONLY time to use Sampler or Looper is when the user EXPLICITLY asks for
+sampling or looping functionality, and even then it must NOT be the only path to Audio Output.
+
+### The #1 rule: unbroken audio path
+There MUST be an unbroken chain of AUDIO connections from Audio Input to Audio Output.
+If ANY link is missing, the patch produces ZERO sound. Trace the complete chain before outputting.
+
+### Delay Line vs Delay w/Mod / Ping Pong Delay
+The **Delay Line** module has **no dry signal and no mix knob** — only delayed audio at the output.
+For a normal delay patch, either:
+- Use **Delay w/Mod** or **Ping Pong Delay** (they have a **mix** parameter), OR
+- Run **Audio Input.output_L → Audio Output.input_L** in **parallel** with the delay chain so dry guitar and delays both reach the output.
+Otherwise the player may hear **bypass** (dry) but **silence or only weird delay** when the patch is engaged.
+
+### CV is NOT audio
+- LFO, ADSR, Env Follower, Value, Sample and Hold, Random, Stompswitch → output CV.
+- CV connects to PARAMETER blocks only (to modulate them).
+- NEVER connect CV to audio_in blocks. This creates noise/garbage.
+- NEVER connect audio to CV parameter blocks.
+
+## CORRECT SIGNAL FLOW EXAMPLES
+
+### Example 1: Minimal delay (default for “simple delay” — NO extra modules)
+Use **Delay w/Mod** (has mix + feedback). **Do not** add LFO unless the user asked for modulation.
+```
+Audio Input.output_L → Delay w/Mod.audio_in_L
+Delay w/Mod.audio_out_L → Audio Output.input_L
+```
+Set **parameters** only (mix, feedback, delay time) — no other modules, no CV connections.
+
+### Example 2: Simple delay + reverb (still no LFO unless asked)
+```
+Audio Input.output_L → Delay Line.audio_in
+Delay Line.audio_out → Plate Reverb.audio_in_L
+Plate Reverb.audio_out_L → Audio Output.input_L
+Audio Input.output_L → Audio Output.input_L
+  (parallel dry — required if using Delay Line; it has no mix)
+```
+
+### Example 3: Filter with envelope follower
+```
+Audio Input.output_L → SV Filter.audio_in
+SV Filter.lowpass_output → Audio Output.input_L
+Audio Input.output_L → Env Follower.audio_in  (Env Follower needs audio IN)
+Env Follower.cv_output → SV Filter.frequency  (CV modulates the filter)
+```
+
+### Example 4: Parallel effects mixed together
+```
+Audio Input.output_L → Delay Line.audio_in        (path 1)
+Audio Input.output_L → Chorus.audio_in             (path 2)
+Delay Line.audio_out → Audio Mixer.audio_in_1_L
+Chorus.audio_out_L → Audio Mixer.audio_in_2_L
+Audio Mixer.audio_out_L → Audio Output.input_L
+```
+
+### Example 5: Effect chain with VCA volume control
+```
+Audio Input.output_L → OD & Distortion.audio_in
+OD & Distortion.audio_out → VCA.audio_in_1
+VCA.audio_out_1 → Plate Reverb.audio_in_L
+Plate Reverb.audio_out_L → Audio Output.input_L
+(VCA.level_control parameter set to 0.8)
+```
+
+## WRONG patterns (these cause silence or noise):
+- Audio Input → Sampler → Audio Output  (SILENT — Sampler doesn't pass through)
+- Audio Input → Looper → Audio Output   (SILENT — Looper doesn't pass through)
+- LFO.output → Delay Line.audio_in      (NOISE — CV signal in audio input)
+- Env Follower.cv_output → VCA.audio_in  (NOISE — CV signal in audio input)
+- Audio chain with VCA.level_control = 0.0  (SILENT — VCA mutes everything)
+
+## SAFE PASS-THROUGH MODULES (use these in audio chains)
+Delay Line, Delay w/Mod, Ping Pong Delay, Reverse Delay,
+Plate Reverb, Hall Reverb, Reverb Lite, Ghostverb, Room Reverb, Diffuser,
+Chorus, Flanger, Phaser, Vibrato, Tremolo, Univibe,
+SV Filter, Multi Filter, Env Filter, Tone Control,
+Compressor, Gate, OD & Distortion, Fuzz, Bit Crusher, Aliaser, Cabinet Sim,
+Granular, Ring Modulator, Pitch Shifter,
+VCA, Audio Mixer, Audio Balance, Audio Panner, Audio In Switch, Audio Out Switch,
+Stereo Spread, Inverter.
+
+## Parameter value guidelines
+- 0.0 = OFF/SILENT — avoid for critical parameters
+- For VCA level_control: 0.7–0.9 (NEVER 0.0)
+- For mix/blend: 0.5 = 50/50 wet/dry
+- For filter frequency: 0.3–0.7
+- For delay time: 0.2–0.5
+- For reverb decay: 0.3–0.6
+
+## MANDATORY VERIFICATION CHECKLIST (do this before outputting JSON)
+1. Trace the audio path: Audio Input.output_L → ... → Audio Output.input_L. Write it out.
+2. Is every module in that chain a PASS-THROUGH module? (No Sampler, No Looper)
+3. Does every module in the chain have BOTH input AND output connected?
+4. Are all CV sources (LFO, Env Follower, etc.) connected ONLY to parameter blocks?
+5. Is VCA level_control > 0? Are no critical parameters at 0.0?
+6. Does Audio Output.input_L have a connection?
+
+## ADDITIONAL RULES
 
 1. Module "type" must EXACTLY match a name from the module reference below.
 2. Block names in parameters and connections must EXACTLY match the block names listed.
@@ -626,3 +756,122 @@ Return a single JSON object with this exact structure:
 
 {module_table}
 '''
+
+
+_STRICT_MINIMAL_BLOCK_JSON = """
+## STRICT MINIMAL REQUEST (matched user wording)
+The user asked for something **small / simple**. Your JSON MUST have:
+- **Exactly 3 modules** total: `Audio Input`, **one** effect module only (use **Delay w/Mod** for delay so mix/feedback are in that module), and `Audio Output`.
+- **No** LFO, Expression, Random, Sequencer, Stompswitch, Sample and Hold, Value, ADSR, or any other module.
+- **Exactly 2 connections** on the main audio path: `Audio Input.output_L` → delay audio input, delay audio output → `Audio Output.input_L` (use correct block names from the module reference for Delay w/Mod).
+- **No CV connections at all** in this patch.
+If you think extra ideas would help, describe them in the patch `name` or in your head — do **not** add modules.
+"""
+
+_STRICT_MINIMAL_BLOCK_TEXT = """
+## STRICT MINIMAL REQUEST (matched user wording)
+The user asked for something **small / simple**. Your written instructions MUST describe **only**:
+**Audio Input → one delay module (prefer Delay w/Mod) → Audio Output** — three modules, audio cables only.
+Do **not** add LFO, Expression, Random, Sequencer, Stompswitch, or other modules unless they explicitly asked for modulation, expression, randomness, etc.
+Optional ideas go in a single short "Later you could add…" sentence, **not** in the main build steps.
+"""
+
+
+def _strict_minimal_match(description: str) -> bool:
+    dl = (description or "").lower().strip()
+    if not dl:
+        return False
+
+    # Never force 3-module mode when the user clearly wants depth / chaos / reference patches
+    complexity_override = (
+        "loop forest",
+        "ambient",
+        "soundscape",
+        "experimental",
+        "complex",
+        "lush",
+        "dense",
+        "layer",
+        "layers",
+        "layered",
+        "granular",
+        "crazy",
+        "wild",
+        "insane",
+        "epic",
+        "generative",
+        "glitch",
+        "idm",
+        "not simple",
+        "go wild",
+        "go crazy",
+        "many module",
+        "lots of module",
+        "full patch",
+        "big patch",
+        "massive",
+        "sequencer",
+        "multiple loop",
+        "parallel path",
+        "parallel chain",
+        "sampler",
+        "fieldtone",
+        "weaver",
+        "reference patch",
+        "maximal",
+    )
+    if any(t in dl for t in complexity_override):
+        return False
+
+    strict_phrases = (
+        "simple delay",
+        "basic delay",
+        "minimal delay",
+        "straight delay",
+        "just delay",
+        "just a delay",
+        "only delay",
+        "only a delay",
+        "easy delay",
+        "mono delay",
+        "nothing else",
+        "no lfo",
+        "no modulation",
+        "no extra",
+        "bare",
+    )
+    if any(p in dl for p in strict_phrases):
+        return True
+
+    words = dl.split()
+    if len(words) <= 6 and "delay" in dl:
+        if not any(
+            x in dl
+            for x in (
+                "lfo",
+                "modulat",
+                "chorus",
+                "random",
+                "express",
+                "shimmer",
+                "sequenc",
+                "tap tempo",
+                "stereo",
+                "ping",
+                "dual",
+                "two delay",
+            )
+        ):
+            return True
+
+    return False
+
+
+def minimalism_rules_for_description(description: str, *, for_json: bool = True) -> str:
+    """
+    Extra rules when the user clearly wants a bare-bones patch (e.g. 'simple delay').
+    for_json=True: append to structured .bin system prompt. False: text streaming / Build Patch.
+    """
+    if not _strict_minimal_match(description):
+        return ""
+    return _STRICT_MINIMAL_BLOCK_JSON if for_json else _STRICT_MINIMAL_BLOCK_TEXT

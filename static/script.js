@@ -1,3 +1,55 @@
+let referenceText = "";
+
+async function handlePdfUpload(input) {
+  const file = input.files[0];
+  if (!file) return;
+
+  const statusEl = document.getElementById("pdf-status");
+  const filenameEl = document.getElementById("pdf-filename");
+  const labelEl = document.querySelector(".pdf-label");
+
+  statusEl.style.display = "inline-flex";
+  statusEl.classList.add("loading");
+  filenameEl.textContent = `Uploading ${file.name}…`;
+  labelEl.style.display = "none";
+
+  const form = new FormData();
+  form.append("file", file);
+
+  try {
+    const resp = await fetch("/upload-pdf", { method: "POST", body: form });
+    const data = await resp.json();
+
+    if (!resp.ok) {
+      statusEl.style.display = "none";
+      labelEl.style.display = "inline-block";
+      const errorEl = document.getElementById("error");
+      errorEl.textContent = data.error || "PDF upload failed.";
+      errorEl.style.display = "block";
+      input.value = "";
+      return;
+    }
+
+    referenceText = data.text;
+    filenameEl.textContent = `${file.name} (${data.pages} pages)`;
+    statusEl.classList.remove("loading");
+  } catch (err) {
+    statusEl.style.display = "none";
+    labelEl.style.display = "inline-block";
+    const errorEl = document.getElementById("error");
+    errorEl.textContent = "Could not upload PDF. Is the server running?";
+    errorEl.style.display = "block";
+    input.value = "";
+  }
+}
+
+function removePdf() {
+  referenceText = "";
+  document.getElementById("pdf-file").value = "";
+  document.getElementById("pdf-status").style.display = "none";
+  document.querySelector(".pdf-label").style.display = "inline-block";
+}
+
 async function buildPatch() {
   const description = document.getElementById("description").value.trim();
   if (!description) return;
@@ -19,7 +71,7 @@ async function buildPatch() {
     const resp = await fetch("/build", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ description }),
+      body: JSON.stringify({ description, reference_text: referenceText }),
     });
 
     if (!resp.ok) {
@@ -79,7 +131,7 @@ async function downloadBin() {
     const resp = await fetch("/build-bin", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ description }),
+      body: JSON.stringify({ description, reference_text: referenceText }),
     });
 
     if (!resp.ok) {
@@ -94,6 +146,10 @@ async function downloadBin() {
     const decoder = new TextDecoder();
     let buffer = "";
     let steps = [];
+    // Must persist across reader chunks: SSE may send "event: done" in one chunk
+    // and a huge "data: {...}" line in the next. If we reset each read(), we
+    // never handle the data line (UI stuck on "Encoding binary…").
+    let pendingEvent = null;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -101,27 +157,47 @@ async function downloadBin() {
       buffer += decoder.decode(value, { stream: true });
 
       const lines = buffer.split("\n");
-      buffer = lines.pop();
+      buffer = lines.pop() ?? "";
 
-      let eventType = null;
       for (const line of lines) {
-        if (line.startsWith("event: ")) {
-          eventType = line.slice(7).trim();
-        } else if (line.startsWith("data: ") && eventType) {
-          const data = JSON.parse(line.slice(6));
+        const row = line.replace(/\r$/, "");
+        if (row === "") continue;
 
-          if (eventType === "progress") {
+        if (row.startsWith("event: ")) {
+          pendingEvent = row.slice(7).trim();
+        } else if (row.startsWith("data: ") && pendingEvent) {
+          const data = JSON.parse(row.slice(6));
+
+          if (pendingEvent === "progress") {
             steps.push(data.message);
             resultEl.innerHTML = '<div class="progress-steps">' +
               steps.map((s, i) => {
                 const isLast = i === steps.length - 1;
                 return `<div class="progress-step ${isLast ? 'active' : 'done'}">${isLast ? '<span class="streaming-cursor"></span> ' : '&#10003; '}${escapeHtml(s)}</div>`;
               }).join("") + '</div>';
-          } else if (eventType === "done") {
-            steps.push(`Patch ready: ${data.modules} modules, ${data.connections} connections`);
-            resultEl.innerHTML = '<div class="progress-steps">' +
-              steps.map(s => `<div class="progress-step done">&#10003; ${escapeHtml(s)}</div>`).join("") +
-              '</div>';
+          } else if (pendingEvent === "done") {
+            const v = data.validation;
+            if (v && v.passed) {
+              steps.push(`Patch ready: ${data.modules} modules, ${data.connections} connections — validation PASSED ✓`);
+            } else if (v && !v.passed) {
+              steps.push(`Patch ready: ${data.modules} modules, ${data.connections} connections`);
+            } else {
+              steps.push(`Patch ready: ${data.modules} modules, ${data.connections} connections`);
+            }
+
+            let html = '<div class="progress-steps">' +
+              steps.map(s => `<div class="progress-step done">&#10003; ${escapeHtml(s)}</div>`).join("");
+
+            if (v && !v.passed && v.issues && v.issues.length) {
+              html += '<div class="validation-warnings">';
+              html += `<strong>⚠ Validation warnings (${v.attempts} attempt${v.attempts > 1 ? 's' : ''}):</strong><ul>`;
+              for (const iss of v.issues) {
+                html += `<li>${escapeHtml(iss)}</li>`;
+              }
+              html += '</ul></div>';
+            }
+            html += '</div>';
+            resultEl.innerHTML = html;
 
             const binary = atob(data.data);
             const bytes = new Uint8Array(binary.length);
@@ -131,14 +207,30 @@ async function downloadBin() {
             const a = document.createElement("a");
             a.href = url;
             a.download = data.filename;
+            document.body.appendChild(a);
             a.click();
+            a.remove();
             URL.revokeObjectURL(url);
-          } else if (eventType === "error") {
+
+            if (data.patch_text) {
+              setTimeout(() => {
+                const txtBlob = new Blob([data.patch_text], { type: "text/plain" });
+                const txtUrl = URL.createObjectURL(txtBlob);
+                const txtA = document.createElement("a");
+                txtA.href = txtUrl;
+                txtA.download = data.filename.replace(".bin", ".txt");
+                document.body.appendChild(txtA);
+                txtA.click();
+                txtA.remove();
+                URL.revokeObjectURL(txtUrl);
+              }, 500);
+            }
+          } else if (pendingEvent === "error") {
             errorEl.textContent = data.message;
             errorEl.style.display = "block";
             resultSection.style.display = "none";
           }
-          eventType = null;
+          pendingEvent = null;
         }
       }
     }
@@ -157,6 +249,7 @@ function clearAll() {
   document.getElementById("description").value = "";
   document.getElementById("error").style.display = "none";
   document.getElementById("result-section").style.display = "none";
+  removePdf();
   document.getElementById("description").focus();
 }
 

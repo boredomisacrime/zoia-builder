@@ -196,32 +196,14 @@ def _get_options_bytes(module):
 
 
 def _get_param_order(module, params_count=None):
-    mod_idx = module.get("mod_idx")
-    try:
-        defaults = MODULE_INDEX[str(mod_idx)].get("param_defaults", {})
-    except (KeyError, TypeError):
-        defaults = {}
-
-    if isinstance(defaults, dict) and defaults:
-        items = list(defaults.items())
-        if any(isinstance(meta, dict) and "order" in meta for _, meta in items):
-            items.sort(
-                key=lambda item: item[1].get("order", 0) if isinstance(item[1], dict) else 0
-            )
-        ordered = [name for name, _ in items]
-
-        blocks = module.get("blocks", {})
-        if isinstance(blocks, dict) and blocks:
-            ordered = [name for name in ordered if blocks.get(name, {}).get("isParam")]
-        return ordered[:params_count] if params_count is not None else ordered
-
+    """Return parameter names in block-position order (the order the firmware expects)."""
     blocks = module.get("blocks", {})
-    if isinstance(blocks, dict):
+    if isinstance(blocks, dict) and blocks:
         params = [(name, meta) for name, meta in blocks.items() if meta.get("isParam")]
-        if not params:
-            return []
-        params.sort(key=lambda item: item[1].get("position", 0))
-        return [name for name, _ in params][:params_count]
+        if params:
+            params.sort(key=lambda item: item[1].get("position", 0))
+            ordered = [name for name, _ in params]
+            return ordered[:params_count] if params_count is not None else ordered
 
     params = list(module.get("parameters", {}).keys())
     return params[:params_count] if params_count is not None else params

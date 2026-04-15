@@ -26,6 +26,16 @@
           placeholder="e.g. A lush shimmer reverb with slow pitch-shifted trails and a tap tempo tremolo on top. Expression pedal controls reverb decay."
           rows="4"
         ></textarea>
+        <div class="pdf-upload">
+          <label for="pdf-file" class="pdf-label">
+            <span class="pdf-icon">&#128196;</span> Attach inspiration (PDF)
+          </label>
+          <input type="file" id="pdf-file" accept=".pdf" onchange="handlePdfUpload(this)" style="display:none;">
+          <div id="pdf-status" class="pdf-status" style="display:none;">
+            <span id="pdf-filename"></span>
+            <button class="pdf-remove" onclick="removePdf()" title="Remove">&times;</button>
+          </div>
+        </div>
         <div class="controls">
           <button id="build-btn" onclick="buildPatch()">
             <span class="btn-text">Build Patch</span>
