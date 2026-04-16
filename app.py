@@ -9,12 +9,24 @@ from PyPDF2 import PdfReader
 from zoia_knowledge import (
     ZOIA_SYSTEM_PROMPT,
     get_structured_prompt,
+    get_design_prompt,
+    get_plan_to_json_prompt,
     minimalism_rules_for_description,
 )
 from patch_builder import build_patch, validate_patch, BuildError
 from patch_encoder import encode_patch
+from patch_designer import (
+    design_patch as designer_design_patch,
+    suggest_improvements as designer_suggest_improvements,
+    render_plan_as_prose,
+    render_plan_as_mermaid,
+    format_profile_block,
+)
 
 app = Flask(__name__)
+
+_DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+_PROFILE_PATH = os.path.join(_DATA_DIR, "profile.json")
 
 OLLAMA_URL = "http://localhost:11434"
 PREFERRED_MODELS = ["gemma4:26b", "gemma3:12b", "llama3.2:latest"]
@@ -286,20 +298,60 @@ def upload_pdf():
     return jsonify({"text": text, "pages": len(pages), "chars": len(text)})
 
 
-def _build_user_message(description, reference_text):
-    """Combine optional reference material with the user's description."""
-    if not reference_text:
-        return description
-    ref = reference_text[:8000]
-    return (
-        "--- INSPIRATION REFERENCE (another pedal/effect — adapt the concept to ZOIA modules) ---\n"
-        f"{ref}\n"
-        "--- END REFERENCE ---\n\n"
-        "Use the reference above as creative inspiration only. "
-        "Do NOT copy its hardware design literally — translate the concept "
-        "into ZOIA modules, connections, and signal flow.\n\n"
-        f"User request: {description}"
-    )
+def _build_user_message(description, reference_text, profile=None, plan_prose=None):
+    """Combine optional profile, plan, reference material, and description."""
+    sections = []
+
+    profile_block = format_profile_block(profile) if profile else ""
+    if profile_block:
+        sections.append(profile_block.strip())
+
+    if plan_prose:
+        sections.append(
+            "PATCH DESIGN PLAN (translate this faithfully into the JSON schema above):\n"
+            + plan_prose.strip()
+        )
+
+    if reference_text:
+        ref = reference_text[:8000]
+        sections.append(
+            "--- INSPIRATION REFERENCE (another pedal/effect — adapt the concept to ZOIA modules) ---\n"
+            f"{ref}\n"
+            "--- END REFERENCE ---\n\n"
+            "Use the reference above as creative inspiration only. "
+            "Do NOT copy its hardware design literally — translate the concept "
+            "into ZOIA modules, connections, and signal flow."
+        )
+
+    sections.append(f"User request: {description}")
+    return "\n\n".join(sections)
+
+
+def _make_full_generator(backend, model):
+    """Return a callable (user_msg, system_prompt) -> full text for the current backend."""
+    def gen(user_msg: str, system_prompt: str) -> str:
+        return generate_full_response(user_msg, backend, model, system_prompt)
+    return gen
+
+
+def _load_profile_from_disk():
+    if not os.path.exists(_PROFILE_PATH):
+        return None
+    try:
+        with open(_PROFILE_PATH, "r") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _save_profile_to_disk(profile: dict) -> bool:
+    try:
+        os.makedirs(_DATA_DIR, exist_ok=True)
+        with open(_PROFILE_PATH, "w") as f:
+            json.dump(profile, f, indent=2, sort_keys=True)
+        return True
+    except OSError:
+        return False
 
 
 @app.route("/build", methods=["POST"])
@@ -307,6 +359,7 @@ def build_patch_text():
     data = request.get_json()
     description = data.get("description", "").strip()
     reference_text = data.get("reference_text", "").strip()
+    profile = data.get("profile") or None
 
     if not description:
         return jsonify({"error": "Please describe the effect you want to build."}), 400
@@ -319,7 +372,7 @@ def build_patch_text():
                      "or set GEMINI_API_KEY (free at https://aistudio.google.com/apikey)."
         }), 503
 
-    user_message = _build_user_message(description, reference_text)
+    user_message = _build_user_message(description, reference_text, profile=profile)
     extra = minimalism_rules_for_description(description, for_json=False)
     if extra:
         user_message = extra + "\n\n" + user_message
@@ -367,13 +420,113 @@ def _build_correction_prompt(original_description, issues, reference_text=""):
     return msg
 
 
+@app.route("/design", methods=["POST"])
+def design_patch_endpoint():
+    """Stage 1: produce a prose plan + optional clarifying questions."""
+    data = request.get_json() or {}
+    description = (data.get("description") or "").strip()
+    reference_text = (data.get("reference_text") or "").strip()
+    profile = data.get("profile") or None
+    previous_plan = data.get("previous_plan") or None
+    tweak = (data.get("tweak") or "").strip() or None
+
+    if not description and not tweak:
+        return jsonify({"error": "Describe the effect you want."}), 400
+
+    backend, model = get_backend()
+    if not backend:
+        return jsonify({
+            "error": "No AI backend available. Either install Ollama with a model, "
+                     "or set GEMINI_API_KEY (free at https://aistudio.google.com/apikey)."
+        }), 503
+
+    design_prompt = get_design_prompt(description)
+    gen = _make_full_generator(backend, model)
+
+    try:
+        plan = designer_design_patch(
+            description=description or "(refine the existing plan per the tweak)",
+            profile=profile,
+            reference_text=reference_text,
+            design_system_prompt=design_prompt,
+            generate_full_response=gen,
+            previous_plan=previous_plan,
+            tweak=tweak,
+        )
+    except Exception as e:
+        msg = str(e)
+        if "429" in msg or "quota" in msg.lower():
+            return jsonify({"error": "Rate limit hit on the AI backend. Try again in a minute."}), 429
+        return jsonify({"error": f"Design stage failed: {msg.splitlines()[0]}"}), 500
+
+    plan_prose = render_plan_as_prose(plan)
+    mermaid = render_plan_as_mermaid(plan)
+    needs_clarification = bool(plan.get("questions")) and plan.get("confidence", 1.0) < 0.75
+
+    return jsonify({
+        "plan": plan,
+        "plan_prose": plan_prose,
+        "mermaid": mermaid,
+        "needs_clarification": needs_clarification,
+        "questions": plan.get("questions", []),
+        "confidence": plan.get("confidence", 0.75),
+    })
+
+
+@app.route("/suggest-improvements", methods=["POST"])
+def suggest_improvements_endpoint():
+    data = request.get_json() or {}
+    plan = data.get("plan") or None
+    profile = data.get("profile") or None
+
+    if not plan:
+        return jsonify({"error": "No plan provided."}), 400
+
+    backend, model = get_backend()
+    if not backend:
+        return jsonify({"error": "No AI backend available."}), 503
+
+    gen = _make_full_generator(backend, model)
+    try:
+        suggestions = designer_suggest_improvements(plan, profile, generate_full_response=gen)
+    except Exception as e:
+        return jsonify({"error": f"Suggest failed: {str(e).splitlines()[0]}"}), 500
+
+    return jsonify({"suggestions": suggestions})
+
+
+@app.route("/profile", methods=["GET", "POST", "DELETE"])
+def profile_endpoint():
+    if request.method == "GET":
+        profile = _load_profile_from_disk()
+        return jsonify({"profile": profile or {}})
+    if request.method == "DELETE":
+        try:
+            if os.path.exists(_PROFILE_PATH):
+                os.remove(_PROFILE_PATH)
+            return jsonify({"ok": True})
+        except OSError as e:
+            return jsonify({"error": str(e)}), 500
+
+    data = request.get_json() or {}
+    profile = data.get("profile") or {}
+    if not isinstance(profile, dict):
+        return jsonify({"error": "Profile must be an object."}), 400
+    if not _save_profile_to_disk(profile):
+        return jsonify({"error": "Could not save profile to disk."}), 500
+    return jsonify({"ok": True, "path": _PROFILE_PATH})
+
+
 @app.route("/build-bin", methods=["POST"])
 def build_patch_bin():
-    data = request.get_json()
-    description = data.get("description", "").strip()
-    reference_text = data.get("reference_text", "").strip()
+    data = request.get_json() or {}
+    description = (data.get("description") or "").strip()
+    reference_text = (data.get("reference_text") or "").strip()
+    profile = data.get("profile") or None
+    plan = data.get("plan") or None
+    auto_randomise = bool(data.get("auto_randomise"))
 
-    if not description:
+    if not description and not plan:
         return jsonify({"error": "Please describe the effect you want to build."}), 400
 
     backend, model = get_backend()
@@ -385,9 +538,26 @@ def build_patch_bin():
         }), 503
 
     structured_prompt = (
-        get_structured_prompt() + minimalism_rules_for_description(description, for_json=True)
+        get_plan_to_json_prompt() if plan else (
+            get_structured_prompt() + minimalism_rules_for_description(description, for_json=True)
+        )
     )
-    original_user_message = _build_user_message(description, reference_text)
+    plan_prose = render_plan_as_prose(plan) if plan else None
+    if auto_randomise:
+        suffix = (
+            "\n\nAUTO-RANDOMISE REQUEST: also add a Pushbutton wired to one or more "
+            "Sample and Hold modules that randomise the most musical parameters of this "
+            "patch (delay time/feedback, reverb decay, filter cutoff, grain position, etc.) "
+            "when the button is tapped. Use the Randomise-on-Tap pattern with connection "
+            "strengths 30-60 for each target parameter."
+        )
+        if plan_prose:
+            plan_prose += suffix
+        else:
+            description = (description or "").rstrip() + suffix
+    original_user_message = _build_user_message(
+        description or "(see plan)", reference_text, profile=profile, plan_prose=plan_prose
+    )
 
     def sse(event, data):
         return f"event: {event}\ndata: {json.dumps(data)}\n\n"
@@ -441,35 +611,50 @@ def build_patch_bin():
 
                 # --- VALIDATION ---
                 yield sse("progress", {"step": "validate", "message": "Validating patch..."})
-                issues = validate_patch(encoder_dict)
+                all_issues = validate_patch(encoder_dict)
+                critical_issues = [i for i in all_issues if not i.startswith("WARN:")]
+                soft_warnings = [i for i in all_issues if i.startswith("WARN:")]
 
-                if issues:
-                    print(f"[validate] {len(issues)} issue(s) found:")
-                    for iss in issues:
+                if critical_issues:
+                    print(f"[validate] {len(critical_issues)} critical issue(s):")
+                    for iss in critical_issues:
                         print(f"  - {iss}")
 
                     if attempt < max_attempts - 1:
-                        final_issues = issues
+                        final_issues = critical_issues
                         current_message = _build_correction_prompt(
-                            description, issues, reference_text
+                            description, critical_issues, reference_text
                         )
                         continue
                     else:
-                        final_issues = issues
+                        final_issues = critical_issues
                         yield sse("progress", {
                             "step": "validate_warn",
                             "message": (
-                                f"WARNING: Patch still has {len(issues)} issue(s) "
+                                f"WARNING: Patch still has {len(critical_issues)} issue(s) "
                                 f"after {max_attempts} attempts. Delivering anyway."
                             )
                         })
                 else:
-                    print("[validate] Patch passed all checks ✓")
+                    print("[validate] Patch passed hard checks ✓")
                     yield sse("progress", {
                         "step": "validate_ok",
                         "message": "Patch validation passed ✓"
                     })
                     final_issues = None
+
+                if soft_warnings:
+                    print(f"[validate] {len(soft_warnings)} soft warning(s):")
+                    for w in soft_warnings:
+                        print(f"  - {w}")
+                    yield sse("progress", {
+                        "step": "validate_info",
+                        "message": (
+                            f"{len(soft_warnings)} non-blocking warning(s): "
+                            + "; ".join(w.replace("WARN: ", "") for w in soft_warnings[:3])
+                            + ("..." if len(soft_warnings) > 3 else "")
+                        ),
+                    })
 
                 n_mods = len(encoder_dict["modules"])
                 n_conns = len(encoder_dict["connections"])
@@ -505,6 +690,10 @@ def build_patch_bin():
                     "modules": n_mods,
                     "connections": n_conns,
                     "patch_text": patch_text,
+                    "ai_json": ai_json,
+                    "plan": plan,
+                    "plan_prose": plan_prose,
+                    "description": description,
                     "validation": {
                         "passed": not final_issues,
                         "issues": final_issues or [],

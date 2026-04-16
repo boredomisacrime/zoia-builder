@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 .env
 .DS_Store
+# Server-side musical profile (user-specific)
+data/profile.json

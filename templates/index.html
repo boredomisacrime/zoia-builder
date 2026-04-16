@@ -9,13 +9,87 @@
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
+  <button id="history-toggle" class="floating-btn" onclick="toggleHistory()" title="Patch history">
+    <span aria-hidden="true">&#9776;</span>
+  </button>
+  <button id="profile-toggle" class="floating-btn profile" onclick="toggleProfile()" title="Musical profile">
+    <span aria-hidden="true">&#9881;</span>
+  </button>
+
+  <aside id="history-drawer" class="drawer left">
+    <div class="drawer-header">
+      <h3>Patch history</h3>
+      <button class="drawer-close" onclick="toggleHistory()" title="Close">&times;</button>
+    </div>
+    <div class="drawer-body">
+      <div id="history-list" class="history-list"></div>
+      <button class="secondary block" onclick="clearHistory()">Clear history</button>
+    </div>
+  </aside>
+
+  <aside id="profile-drawer" class="drawer right">
+    <div class="drawer-header">
+      <h3>Musical profile</h3>
+      <button class="drawer-close" onclick="toggleProfile()" title="Close">&times;</button>
+    </div>
+    <div class="drawer-body">
+      <p class="drawer-intro">Tell the builder about your taste. It will shape every patch. Saved locally to this browser; optionally saved to the project folder too.</p>
+
+      <label>Artists / references
+        <textarea id="pf-artists" rows="2" placeholder="Godspeed You! Black Emperor, Mogwai, Slint"></textarea>
+      </label>
+      <label>Genres / moods
+        <input id="pf-genres" type="text" placeholder="post-rock, ambient, drone">
+      </label>
+      <label>Instrument
+        <input id="pf-instrument" type="text" placeholder="Electric guitar">
+      </label>
+      <label>Tuning
+        <input id="pf-tuning" type="text" placeholder="F# A# C# F A# C#">
+      </label>
+      <label>Playing style
+        <input id="pf-playing" type="text" placeholder="Slow swells, drones, heavy stereo">
+      </label>
+      <label>Rig
+        <input id="pf-rig" type="text" placeholder="Stereo, direct to interface">
+      </label>
+      <label class="inline">
+        <input id="pf-expression" type="checkbox"> Expression pedal available
+      </label>
+      <label class="inline">
+        <input id="pf-midi" type="checkbox"> MIDI available
+      </label>
+      <label>Wet/dry leaning
+        <input id="pf-wetness" type="range" min="0" max="100" value="50">
+        <span id="pf-wetness-val" class="range-val">50% wet</span>
+      </label>
+      <label>Stompswitch comfort
+        <input id="pf-stompswitch" type="text" placeholder="All 3, or just bypass+tap">
+      </label>
+      <label>Avoid
+        <input id="pf-avoid" type="text" placeholder="harsh bit-crushing, fast choppy tremolo">
+      </label>
+
+      <div class="drawer-actions">
+        <button id="pf-save" onclick="saveProfile()">Save</button>
+        <button class="secondary" onclick="exportProfile()">Export JSON</button>
+        <label class="secondary btn-as-label">
+          <input type="file" accept=".json,application/json" onchange="importProfile(this)" style="display:none;">
+          Import JSON
+        </label>
+        <button class="secondary" onclick="saveProfileToDisk()" title="Write profile.json in the project folder">Save to disk</button>
+      </div>
+      <p id="pf-status" class="drawer-status"></p>
+    </div>
+  </aside>
+
   <div class="container">
     <header>
       <div class="logo">
-        <span class="logo-icon">◆</span>
+        <span class="logo-icon">&#9670;</span>
         <h1>ZOIA Patch Builder</h1>
       </div>
-      <p class="subtitle">Describe the effect you want. Get step-by-step build instructions.</p>
+      <p class="subtitle">Describe the effect you want. Get a design, a loadable <code>.bin</code>, and build notes.</p>
     </header>
 
     <main>
@@ -38,25 +112,75 @@
         </div>
         <div class="controls">
           <button id="build-btn" onclick="buildPatch()">
-            <span class="btn-text">Build Patch</span>
-            <span class="btn-loading" style="display:none;">Building…</span>
+            <span class="btn-text">Design &amp; build</span>
+            <span class="btn-loading" style="display:none;">Working&hellip;</span>
           </button>
-          <button id="download-btn" class="accent-secondary" onclick="downloadBin()">
-            <span class="btn-text">Download .bin</span>
-            <span class="btn-loading" style="display:none;">Generating…</span>
-          </button>
+          <label class="toggle inline">
+            <input id="opt-randomise" type="checkbox">
+            <span>Add a random button</span>
+          </label>
           <button id="clear-btn" class="secondary" onclick="clearAll()">Clear</button>
         </div>
       </div>
 
       <div id="error" class="error" style="display:none;"></div>
 
+      <div id="clarify-card" class="clarify-card" style="display:none;">
+        <h3>One moment — a quick check</h3>
+        <div id="clarify-plan-preview" class="clarify-plan"></div>
+        <div id="clarify-questions" class="clarify-questions"></div>
+        <div class="clarify-actions">
+          <button id="clarify-build" onclick="submitClarifications()">Answer &amp; build</button>
+          <button class="secondary" onclick="buildAnyway()">Build anyway</button>
+          <button class="secondary" onclick="cancelClarify()">Cancel</button>
+        </div>
+      </div>
+
       <div id="result-section" style="display:none;">
         <div class="result-header">
           <h2>Your Patch</h2>
-          <button class="copy-btn" onclick="copyResult()">Copy</button>
+          <div class="result-actions">
+            <button class="copy-btn" onclick="downloadBinFromState()">Download .bin</button>
+            <button class="copy-btn" onclick="downloadNotes()">Download notes</button>
+            <button class="copy-btn" onclick="copyResult()">Copy notes</button>
+          </div>
         </div>
-        <div id="result" class="result-content"></div>
+
+        <div class="tabs" id="result-tabs">
+          <button class="tab active" data-tab="progress" onclick="switchTab('progress')">Progress</button>
+          <button class="tab" data-tab="notes" onclick="switchTab('notes')">Notes</button>
+          <button class="tab" data-tab="plan" onclick="switchTab('plan')">Design</button>
+          <button class="tab" data-tab="diagram" onclick="switchTab('diagram')">Flow</button>
+          <button class="tab" data-tab="json" onclick="switchTab('json')">JSON</button>
+        </div>
+
+        <div id="tab-progress" class="tab-body active">
+          <div id="progress-panel" class="result-content"></div>
+        </div>
+        <div id="tab-notes" class="tab-body">
+          <div id="notes-panel" class="result-content"></div>
+        </div>
+        <div id="tab-plan" class="tab-body">
+          <div id="plan-panel" class="result-content"></div>
+        </div>
+        <div id="tab-diagram" class="tab-body">
+          <div id="diagram-panel" class="result-content mermaid-panel"></div>
+        </div>
+        <div id="tab-json" class="tab-body">
+          <pre id="json-panel" class="result-content json-panel"></pre>
+        </div>
+
+        <div id="refine-section" class="refine-section" style="display:none;">
+          <div class="refine-row">
+            <input id="refine-input" type="text" placeholder='Tweak this patch ("make it wetter", "add tremolo", "simpler")'>
+            <button id="refine-btn" onclick="refinePatch()">Refine</button>
+          </div>
+          <div class="refine-actions">
+            <button class="secondary" onclick="loadSuggestions()" id="suggest-btn">Suggest improvements</button>
+            <button class="secondary" onclick="variationAB()" id="ab-btn">Variation (A/B)</button>
+          </div>
+          <div id="suggestions-panel" class="suggestions-panel" style="display:none;"></div>
+        </div>
       </div>
     </main>
 
@@ -65,6 +189,8 @@
     </footer>
   </div>
 
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <script src="/static/profile.js"></script>
   <script src="/static/script.js"></script>
 </body>
 </html>

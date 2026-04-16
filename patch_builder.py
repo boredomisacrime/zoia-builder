@@ -475,6 +475,308 @@ _AUDIO_IN_PATTERNS = (
 )
 
 
+# ---------------------------------------------------------------------------
+# AI output normalisation
+#
+# The AI frequently produces connection/parameter strings that don't quite
+# match the ModuleIndex. We try to rescue the common mistakes before handing
+# the patch to the encoder, instead of failing outright.
+# ---------------------------------------------------------------------------
+
+# Generic block-name aliases. Tried after exact/case-insensitive match, before
+# fuzzy match. Each value is a list of candidates in preference order — the
+# first one that actually exists on the module wins.
+_BLOCK_ALIASES = {
+    # Audio I/O — generic → suffixed variants
+    "audio_in":     ["audio_in_L", "audio_in", "audio_in_1_L", "audio_in_1", "input_L", "input"],
+    "audio_out":    ["audio_out_L", "audio_out", "audio_out_1", "output_L"],
+    "in":           ["audio_in_L", "audio_in", "input_L", "cv_input", "input"],
+    "out":          ["audio_out_L", "audio_out", "output_L", "cv_output", "output"],
+    "input":        ["input_L", "audio_in_L", "audio_in", "audio_in_1_L", "cv_input"],
+    "input_l":      ["input_L", "audio_in_L"],
+    "input_r":      ["input_R", "audio_in_R"],
+    "output_l":     ["output_L", "audio_out_L"],
+    "output_r":     ["output_R", "audio_out_R"],
+    "left":         ["audio_in_L", "audio_out_L", "input_L", "output_L"],
+    "right":        ["audio_in_R", "audio_out_R", "input_R", "output_R"],
+    # CV in/out
+    "cv_in":        ["cv_input", "cv_in_1"],
+    "cv_out":       ["cv_output", "output", "cv_out_1"],
+    "cv_output":    ["cv_output", "output"],   # LFO calls it `output`, not `cv_output`
+    "cv_input":     ["cv_input", "input"],
+    "output":       ["output", "cv_output", "output_L", "audio_out_L", "audio_out"],
+    # Control-ish
+    "trigger":      ["trigger_in", "record", "reset", "tap_tempo_in"],
+    "gate":         ["gate_in", "trigger_in"],
+    "tap":          ["tap_tempo_in", "tap_control"],
+    "tempo":        ["tap_tempo_in", "tap_control"],
+    # Sampler/Looper shortcuts
+    "record_in":    ["record"],
+    "play":         ["sample_playback", "restart_playback"],
+    "position":     ["start", "position_cv_out"],
+    # Mixer shortcuts
+    "in_1":         ["audio_in_1_L", "audio_in_1", "in_1"],
+    "in_2":         ["audio_in_2_L", "audio_in_2", "in_2"],
+    "in_3":         ["audio_in_3_L", "audio_in_3", "in_3"],
+    "in_4":         ["audio_in_4_L", "audio_in_4", "in_4"],
+    "out_1":        ["audio_out_L", "out_track_1"],
+    "mix_out":      ["audio_out_L", "audio_out"],
+    # Delay-ish
+    "feedback":     ["feedback"],
+    "delay":        ["delay_time"],
+    "mix":          ["mix"],
+    "decay":        ["decay_time"],
+    "pitch":        ["pitch_shift", "speed_pitch", "frequency"],
+    "freq":         ["frequency", "mod_rate", "rate"],
+    "rate":         ["mod_rate", "rate", "cv_control"],
+    "amount":       ["mod_depth", "mix", "filter_gain"],
+}
+
+# Module type aliases — what the AI calls something → canonical name
+_MODULE_TYPE_ALIASES = {
+    "Input": "Audio Input",
+    "Output": "Audio Output",
+    "Mixer": "Audio Mixer",
+    "Reverb": "Reverb Lite",
+    "Delay": "Delay w/Mod",
+    "Delay Mod": "Delay w/Mod",
+    "Modulated Delay": "Delay w/Mod",
+    "Env": "Env Follower",
+    "S&H": "Sample and Hold",
+    "SH": "Sample and Hold",
+    "SampleHold": "Sample and Hold",
+    "Envelope": "ADSR",
+    "Compressor Pedal": "Compressor",
+    "Tremolo Pedal": "Tremolo",
+    "Stomp": "Stompswitch",
+    "Button": "Pushbutton",
+    "UIButton": "UI Button",
+    "Multi-Filter": "Multi Filter",
+    "Multifilter": "Multi Filter",
+    "Tone": "Tone Control",
+    "Phaser Pedal": "Phaser",
+    "Flanger Pedal": "Flanger",
+    "Chorus Pedal": "Chorus",
+    "Ping-Pong": "Ping Pong Delay",
+    "PingPong": "Ping Pong Delay",
+    "Pingpong Delay": "Ping Pong Delay",
+    "Granular Delay": "Granular",
+    "Freeze": "Ghostverb",
+    "Random CV": "Random",
+    "Trigger": "Pushbutton",
+    "Tap": "Stompswitch",
+    "Footswitch": "Stompswitch",
+}
+
+# Word-valued parameter heuristics. The AI sometimes writes
+# {"mix": "high"} instead of {"mix": 0.8}. Clamp to musical values.
+_PARAM_WORD_MAP = {
+    "off": 0.0, "none": 0.0, "min": 0.0, "zero": 0.0,
+    "low": 0.2, "short": 0.2, "slow": 0.2, "soft": 0.2,
+    "mid": 0.5, "medium": 0.5, "half": 0.5, "center": 0.5, "default": 0.5,
+    "high": 0.8, "long": 0.8, "fast": 0.8, "hard": 0.8, "loud": 0.8,
+    "on": 1.0, "max": 1.0, "full": 1.0, "one": 1.0,
+}
+
+
+def _coerce_param_value(val, default=0.5):
+    """Best-effort conversion of AI param value to 0.0-1.0 float."""
+    if val is None:
+        return default
+    if isinstance(val, bool):
+        return 1.0 if val else 0.0
+    if isinstance(val, (int, float)):
+        return max(0.0, min(1.0, float(val)))
+    if isinstance(val, str):
+        s = val.strip().lower().rstrip("%").strip()
+        if not s:
+            return default
+        try:
+            f = float(s)
+            if f > 1.0:
+                f = f / 100.0
+            return max(0.0, min(1.0, f))
+        except ValueError:
+            pass
+        if s in _PARAM_WORD_MAP:
+            return _PARAM_WORD_MAP[s]
+    return default
+
+
+def _coerce_strength(s):
+    """Accept 0-100 int, 0-1.0 float, or loose strings. Return int 0-100."""
+    if s is None:
+        return 100
+    try:
+        f = float(s)
+    except (TypeError, ValueError):
+        return 100
+    if f <= 0:
+        return 0
+    if f <= 1.0:
+        return int(round(f * 100))
+    if f >= 100:
+        return 100
+    return int(round(f))
+
+
+def _resolve_block_name(wanted, blocks_def):
+    """
+    Best-effort resolution of an AI-written block name against a module's
+    block dictionary. Returns the canonical block name or None.
+
+    Priority: exact → case-insensitive → alias table → substring → fuzzy.
+    """
+    if not wanted or not isinstance(blocks_def, dict):
+        return None
+    if wanted in blocks_def:
+        return wanted
+
+    lower_map = {k.lower(): k for k in blocks_def}
+    wl = wanted.lower().strip()
+    if wl in lower_map:
+        return lower_map[wl]
+
+    # Alias table
+    for candidate in _BLOCK_ALIASES.get(wl, []):
+        if candidate in blocks_def:
+            return candidate
+        if candidate.lower() in lower_map:
+            return lower_map[candidate.lower()]
+
+    # Plural/singular strip
+    for variant in (wl.rstrip("s"), wl + "s", wl.replace("-", "_"),
+                    wl.replace(" ", "_")):
+        if variant in lower_map:
+            return lower_map[variant]
+
+    # Fuzzy fallback
+    close = get_close_matches(wanted, list(blocks_def.keys()), n=1, cutoff=0.6)
+    if close:
+        return close[0]
+    close = get_close_matches(wl, [k.lower() for k in blocks_def], n=1, cutoff=0.55)
+    if close:
+        return lower_map[close[0]]
+    return None
+
+
+def _normalise_module_type(mod_type):
+    """Case-insensitive alias resolution for module type strings."""
+    if not isinstance(mod_type, str):
+        return mod_type
+    t = mod_type.strip()
+    if t in _NAME_TO_ID:
+        return t
+    if t in _MODULE_TYPE_ALIASES:
+        return _MODULE_TYPE_ALIASES[t]
+    lower_map = {n.lower(): n for n in _ALL_MODULE_NAMES}
+    if t.lower() in lower_map:
+        return lower_map[t.lower()]
+    lower_alias = {k.lower(): v for k, v in _MODULE_TYPE_ALIASES.items()}
+    if t.lower() in lower_alias:
+        return lower_alias[t.lower()]
+    close = get_close_matches(t, _ALL_MODULE_NAMES, n=1, cutoff=0.7)
+    if close:
+        return close[0]
+    return t
+
+
+def _sanitise_ai_json(ai_json):
+    """
+    Normalise the AI output before translation:
+      - Ensure Audio Input & Audio Output modules exist.
+      - Resolve module-type aliases.
+      - Clamp page (0..63) and position (0..39).
+      - Coerce parameter values and connection strengths.
+
+    Mutates ai_json in place and returns it. Appends human-readable notes to
+    ai_json["_fixups"] for anything non-trivial we did.
+    """
+    if not isinstance(ai_json, dict):
+        return ai_json
+    fixups = ai_json.setdefault("_fixups", [])
+
+    modules = ai_json.setdefault("modules", [])
+    if not isinstance(modules, list):
+        modules = []
+        ai_json["modules"] = modules
+
+    for i, m in enumerate(modules):
+        if not isinstance(m, dict):
+            continue
+        original_type = m.get("type", "")
+        normalised = _normalise_module_type(original_type)
+        if normalised != original_type:
+            fixups.append(f"Renamed module #{i} '{original_type}' → '{normalised}'.")
+            m["type"] = normalised
+
+        page = m.get("page", 0)
+        try:
+            page = int(page)
+        except (TypeError, ValueError):
+            page = 0
+        if page < 0:
+            page = 0
+        if page > 63:
+            fixups.append(f"Clamped module #{i} page {page} → 63.")
+            page = 63
+        m["page"] = page
+
+        pos = m.get("position")
+        if pos is not None:
+            try:
+                pos = int(pos)
+            except (TypeError, ValueError):
+                pos = None
+            if pos is not None:
+                if pos < 0 or pos > 39:
+                    fixups.append(f"Clamped module #{i} position {pos} into grid.")
+                    pos = max(0, min(39, pos))
+                m["position"] = pos
+
+        params = m.get("parameters")
+        if isinstance(params, dict):
+            cleaned = {}
+            for k, v in params.items():
+                coerced = _coerce_param_value(v, default=None)
+                if coerced is None:
+                    # _coerce_param_value uses 0.5 default; distinguish "unknown"
+                    cleaned[k] = _coerce_param_value(v, default=0.5)
+                else:
+                    cleaned[k] = coerced
+            m["parameters"] = cleaned
+
+    # Ensure Audio Input / Audio Output exist
+    def _has(canonical):
+        return any(
+            _normalise_module_type(x.get("type", "")) == canonical
+            for x in modules
+        )
+
+    if not _has("Audio Input"):
+        fixups.append("Added missing Audio Input module.")
+        modules.insert(0, {
+            "type": "Audio Input", "page": 0, "position": 0,
+            "color": "Yellow", "name": "Input",
+        })
+    if not _has("Audio Output"):
+        fixups.append("Added missing Audio Output module.")
+        last_page = max((x.get("page", 0) for x in modules), default=0)
+        modules.append({
+            "type": "Audio Output", "page": last_page, "position": 38,
+            "color": "Yellow", "name": "Output",
+        })
+
+    conns = ai_json.setdefault("connections", [])
+    if isinstance(conns, list):
+        for c in conns:
+            if not isinstance(c, dict):
+                continue
+            c["strength"] = _coerce_strength(c.get("strength", 100))
+
+    return ai_json
+
+
 class BuildError(Exception):
     pass
 
@@ -640,6 +942,32 @@ def validate_patch(encoder_dict):
                 f"This is less than 1% and may cause silence."
             )
 
+    # --- Soft warnings: patch may still play but likely has dead code or broken modulation ---
+    # These are prefixed "WARN:" so app.py can surface them without triggering a retry.
+    out_sources = {c["source_raw"] for c in connections}
+    for i, mod in enumerate(modules):
+        if i == audio_out_idx:
+            continue
+        if mod["mod_idx"] in _CV_ONLY_IDS:
+            if i not in out_sources:
+                mtype = mod.get("type", "?")
+                if mtype not in {"Stompswitch", "Pushbutton", "UI Button", "Value"}:
+                    issues.append(
+                        f"WARN: {mtype} produces CV but nothing reads from it — "
+                        f"its modulation is unused."
+                    )
+            continue
+        if i not in out_sources and mod["mod_idx"] not in _CAPTURE_PLAY_IDS:
+            has_audio_out = any(
+                _block_type_cache.get((i, bi["position"])) == "audio_out"
+                for bi in mod.get("blocks", {}).values()
+            )
+            if has_audio_out:
+                mtype = mod.get("type", "?")
+                issues.append(
+                    f"WARN: {mtype} produces audio but nothing reads from its output."
+                )
+
     return issues
 
 
@@ -794,6 +1122,8 @@ def build_patch(ai_json):
     if not isinstance(ai_json, dict):
         raise BuildError("Expected a JSON object, got something else.")
 
+    ai_json = _sanitise_ai_json(ai_json)
+
     patch_name = str(ai_json.get("name", "AI Patch"))[:16]
     page_names = ai_json.get("pages", ["Main"])
     if not isinstance(page_names, list):
@@ -834,7 +1164,9 @@ def build_patch(ai_json):
         default_block_count = mod_def.get("default_blocks", len(blocks_def))
         min_blocks = mod_def.get("min_blocks", default_block_count)
 
-        # Collect block names referenced in connections targeting this module
+        # Collect block names referenced in connections targeting this module.
+        # We resolve aliases here (e.g. "cv_output" → "output" on LFO) so the
+        # option/block auto-activation can see the real block names.
         connected_blocks = set()
         for ai_conn in ai_connections:
             for endpoint_key in ("from", "to"):
@@ -843,9 +1175,13 @@ def build_patch(ai_json):
                     mod_part, blk = ep.rsplit(".", 1)
                     mod_part_clean = mod_part.split("#")[0].strip()
                     if _resolve_module_name(mod_part_clean) == resolved_name:
-                        connected_blocks.add(blk.strip())
+                        resolved_blk = _resolve_block_name(blk.strip(), blocks_def)
+                        connected_blocks.add(resolved_blk or blk.strip())
 
-        ai_params = ai_mod.get("parameters", {})
+        ai_params = {
+            (_resolve_block_name(k, blocks_def) or k): v
+            for k, v in (ai_mod.get("parameters", {}) or {}).items()
+        }
 
         # --- Option ↔ Block synchronisation ---
         # The ZOIA firmware uses option bytes to decide how many blocks a
@@ -916,11 +1252,13 @@ def build_patch(ai_json):
 
         # Grid positions occupied by this module — auto-fix overlaps
         mod_width = max(block_count, min_blocks)
+        if mod_width > 40:
+            mod_width = 40  # cap at a single page; caller sees a warning below
+        out_of_bounds = position < 0 or position + mod_width > 40
         positions = list(range(position, position + mod_width))
-
         has_overlap = any((page, cell) in occupied for cell in positions)
-        if has_overlap:
-            position = _next_free_span(occupied, page, mod_width)
+        if has_overlap or out_of_bounds:
+            page, position = _next_free_span(occupied, page, mod_width)
             positions = list(range(position, position + mod_width))
 
         for cell in positions:
@@ -1028,11 +1366,24 @@ def build_patch(ai_json):
 
 
 def _resolve_module_name(name):
-    """Exact match first, then case-insensitive."""
+    """
+    Resolve an AI-written module type to its canonical name.
+    Priority: exact → case-insensitive → alias table → fuzzy (high cutoff).
+    """
+    if not isinstance(name, str):
+        return None
     if name in _NAME_TO_ID:
         return name
     lower_map = {n.lower(): n for n in _ALL_MODULE_NAMES}
-    return lower_map.get(name.lower())
+    if name.lower() in lower_map:
+        return lower_map[name.lower()]
+    if name in _MODULE_TYPE_ALIASES:
+        return _MODULE_TYPE_ALIASES[name]
+    lower_alias = {k.lower(): v for k, v in _MODULE_TYPE_ALIASES.items()}
+    if name.lower() in lower_alias:
+        return lower_alias[name.lower()]
+    close = get_close_matches(name, _ALL_MODULE_NAMES, n=1, cutoff=0.75)
+    return close[0] if close else None
 
 
 def _resolve_connection_endpoint(endpoint_str, modules, type_instance_map):
@@ -1060,45 +1411,82 @@ def _resolve_connection_endpoint(endpoint_str, modules, type_instance_map):
         raise BuildError(f"Module type '{module_part}' not found.{suggestion}")
 
     instances = type_instance_map.get(resolved_name, [])
-    if instance >= len(instances):
+    if not instances:
         raise BuildError(
-            f"Instance #{instance} of '{resolved_name}' not found — "
-            f"only {len(instances)} instance(s) in patch."
+            f"No '{resolved_name}' module in patch — add it or reference a different module."
         )
+    if instance >= len(instances):
+        # Fall back to the last existing instance rather than failing outright.
+        instance = len(instances) - 1
     mod_idx = instances[instance]
     module = modules[mod_idx]
 
     block_name_clean = block_name.strip()
     blocks = module.get("blocks", {})
-    if block_name_clean not in blocks:
+    resolved_block = _resolve_block_name(block_name_clean, blocks)
+    if resolved_block is None:
         available = list(blocks.keys())
-        close = get_close_matches(block_name_clean, available, n=1, cutoff=0.6)
-        suggestion = f" Did you mean '{close[0]}'?" if close else f" Available: {available}"
         raise BuildError(
-            f"Block '{block_name_clean}' not found on '{resolved_name}'.{suggestion}"
+            f"Block '{block_name_clean}' not found on '{resolved_name}'. "
+            f"Available blocks: {available}"
         )
 
-    return mod_idx, blocks[block_name_clean]["position"]
+    return mod_idx, blocks[resolved_block]["position"]
 
 
 def _resolve_options(mod_def, ai_options):
-    """Convert {"option_name": "value_string"} to {"option_name": index_int}."""
+    """
+    Convert {"option_name": value} to {"option_name": index_int}.
+
+    Accepts:
+      - exact string match (case-insensitive)
+      - integer matching a numeric option list (e.g. channels=[2..8], ai=4)
+      - integer directly addressing the option index
+      - fuzzy string match (cutoff 0.7) for near misses
+    """
     options_def = mod_def.get("options", {})
     if not isinstance(options_def, dict):
         return {}
+    if not isinstance(ai_options, dict):
+        ai_options = {}
 
     result = {}
     for opt_name, opt_values in options_def.items():
         ai_val = ai_options.get(opt_name)
-        if ai_val is not None and isinstance(opt_values, list):
-            str_values = [str(v).lower() for v in opt_values]
-            ai_val_str = str(ai_val).lower()
-            if ai_val_str in str_values:
-                result[opt_name] = str_values.index(ai_val_str)
-            else:
-                result[opt_name] = 0
-        else:
+        if ai_val is None or not isinstance(opt_values, list) or not opt_values:
             result[opt_name] = 0
+            continue
+
+        str_values = [str(v).lower() for v in opt_values]
+        ai_val_str = str(ai_val).strip().lower()
+
+        if ai_val_str in str_values:
+            result[opt_name] = str_values.index(ai_val_str)
+            continue
+
+        # Integer literal that matches an option's integer value
+        try:
+            ai_int = int(ai_val_str)
+            for idx, v in enumerate(opt_values):
+                try:
+                    if int(v) == ai_int:
+                        result[opt_name] = idx
+                        break
+                except (TypeError, ValueError):
+                    continue
+            else:
+                if 0 <= ai_int < len(opt_values):
+                    result[opt_name] = ai_int
+                else:
+                    result[opt_name] = 0
+            continue
+        except (TypeError, ValueError):
+            pass
+
+        # Fuzzy string match
+        close = get_close_matches(ai_val_str, str_values, n=1, cutoff=0.7)
+        result[opt_name] = str_values.index(close[0]) if close else 0
+
     return result
 
 
@@ -1127,14 +1515,16 @@ def _next_free_position(occupied, page):
     return 0
 
 
-def _next_free_span(occupied, page, width):
-    """Find the next contiguous run of `width` free cells on a page."""
-    for start in range(40 - width + 1):
-        if all((page, start + w) not in occupied for w in range(width)):
-            return start
-    # Overflow to next page if current is full
-    next_page = page + 1
-    for start in range(40 - width + 1):
-        if all((next_page, start + w) not in occupied for w in range(width)):
-            return start
-    return 0
+def _next_free_span(occupied, page, width, max_pages=64):
+    """
+    Find a contiguous run of `width` free cells, spilling forward across
+    pages as needed. Returns (page, start_position).
+    """
+    width = max(1, min(width, 40))
+    for p in range(page, max_pages):
+        for start in range(40 - width + 1):
+            if all((p, start + w) not in occupied for w in range(width)):
+                return (p, start)
+    # Out of pages — wrap back to given page's first cell (caller will likely
+    # still overlap, but at least the patch will produce).
+    return (page, 0)
